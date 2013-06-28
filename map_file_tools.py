@@ -40,25 +40,22 @@ Author: Alex A Ermoshenko (.erax)
 import sys, getopt
 import re
 
-#map_file = "test_1/mobileengine.map"
-#example_crashlog = "test_1/Elementals The Magic Key (HD)_2013-06-26-153856_iPad-Stella-Games.crash"
-#work_crashlog = "test_1/Elementals The Magic Key (HD)_2013-06-26-161913_iPad-Stella-Games.crash"
-#example_crashlog_symbol_name = "avmplus::AppClass::Crush_VIA_SIGSEGV()"
-
 map_file = False
 example_crashlog = False
 work_crashlog = False
 example_crashlog_symbol_name = False
 
+symbolicatedCrashlog = False
+
 
 
 def usage_and_exit():
-	print 'map_file_tools.py --map=map_file.map --test_crashlog=Crush_VIA_SIGSEGV.crash --symbol=Crush_VIA_SIGSEGV() --crash=crashlog.crash'
+	print 'map_file_tools.py --map=map_file.map --test_crashlog=Crush_VIA_SIGSEGV.crash --symbol=Crush_VIA_SIGSEGV() --crash=crashlog.crash [--out=out.crush]'
 	sys.exit(2)
 
 
 try:
-	opts, args = getopt.getopt(sys.argv[1:],"::mtcs",["map=", "test_crashlog=", "crash=", "symbol="])
+	opts, args = getopt.getopt(sys.argv[1:],"::mtcso",["map=", "test_crashlog=", "crash=", "symbol=", "out="])
 except getopt.GetoptError:
 	usage_and_exit()
 for opt, arg in opts:
@@ -70,6 +67,8 @@ for opt, arg in opts:
 		work_crashlog = arg
 	elif opt in ('-s', '--symbol'):
 		example_crashlog_symbol_name = arg
+	elif opt in ('-o', '--out'):
+		symbolicatedCrashlog = arg
 
 if not map_file:
 	print 'Mapfile not specified\n'
@@ -116,6 +115,10 @@ def load_pc_and_lr_register_from_crashlog(file):
 	#
 	#Match part of input is: "lr: 0x000ca91c      pc: 0x000ca748"
 	#The first group is value of LR register, and second is value of PC register
+	
+	#identifier
+	#^Identifier:\W(.*)		
+	identifierPattern = '[\n\r]Identifier:\W+(.*)'
 
 	
 	with open(file) as f:
@@ -125,8 +128,14 @@ def load_pc_and_lr_register_from_crashlog(file):
 		if len(regs) != 1:
 			print 'Bad crashlog ', file
 			sys.exit(0)
+		
+		identifiers = re.findall(identifierPattern, content)
+		if len(identifiers) != 1:
+			print 'Bad crashlog (multiple identifiers)', file
+			sys.exit(0)
+		
 		match = regs[0];
-		return {'lr':eval(match[0]), 'pc':eval(match[1])}
+		return {'lr':eval(match[0]), 'pc':eval(match[1]), 'id':identifiers[0]}
 		
 		
 def load_symbols(file):
@@ -175,8 +184,7 @@ def load_symbols(file):
 						'name':		entry[5]}
 				result.append(obj)
 		return result
-		
-		
+
 		
 		
 def get_addr_of(symbols, func):
@@ -220,7 +228,31 @@ def addr_to_str(addr):
 	return "0x%0.8X" % addr
 	
 	
+def symbolicate(symbols, inputCrashlog, outputCrashlog, projectName):
+	stackLine =  '(\d+\W+{project_name}\W+(0x[0-9a-f]+)\W+0x[0-9a-f]+\W+\+\W+[0-9]+)'
+	
+	projectName = projectName.replace('"', '\"')
+	projectName = projectName.replace('[', '\[')
+	projectName = projectName.replace(']', '\]')
+	projectName = projectName.replace('(', '\(')
+	projectName = projectName.replace(')', '\)')
+	
+	stackLinePattern = stackLine.format(project_name = projectName);
+	print stackLinePattern;
+	
+	with open(inputCrashlog) as f:
+		content = f.read()
+		all = re.findall(stackLinePattern, content)
 		
+		for line, address in all:
+			func = get_func_at(symbols, eval(address))
+			lineWithFunc = line + "\t" + func
+			content = content.replace(line, lineWithFunc);
+
+	with open(outputCrashlog, 'w+') as file:
+		file.write(content)
+
+	pass
 		
 symbols = load_symbols(map_file)
 
@@ -232,11 +264,22 @@ symbols.sort(lambda a,b: a['addr'] - b['addr'])
 
 
 addrOfCrushSite = get_addr_of(symbols, example_crashlog_symbol_name)
-pc_registerValueOfCrushSite = load_pc_and_lr_register_from_crashlog(example_crashlog)['pc']
+registersExample = load_pc_and_lr_register_from_crashlog(example_crashlog)
+pc_registerValueOfCrushSite = registersExample['pc']
+
+registers = load_pc_and_lr_register_from_crashlog(work_crashlog)
+
+
+if registersExample['id'] != registers['id']:
+	print "Identifiers of crushlogs not the same", registersExample['id'], " != ", registers['id']
+
+projectName = registersExample['id']
+
+
 
 print ""
 
-
+print 'Project name      :   ', projectName
 print 'Main function addr:   ', addr_to_str(get_addr_of(symbols, 'main'))
 print 'Relocate with offset  ', addr_to_str((addrOfCrushSite - pc_registerValueOfCrushSite))
 print 'Relocate 0x4a000000 + ', addr_to_str(0x4a000000 - (addrOfCrushSite - pc_registerValueOfCrushSite))
@@ -258,7 +301,6 @@ symbols = relocate(symbols, addrOfCrushSite, pc_registerValueOfCrushSite)
 
 #print addr_to_str(get_addr_of(symbols, 'Crush1()'))
 
-registers = load_pc_and_lr_register_from_crashlog(work_crashlog)
 
 lr = registers['lr']
 pc = registers['pc']
@@ -306,8 +348,10 @@ if l == p:
 	print "PC+16 in:", get_func_at(symbols, pc+16)
 	print "LR+16 in:", get_func_at(symbols, lr+16)
 	
+if symbolicatedCrashlog:
+	symbolicate(symbols, work_crashlog, symbolicatedCrashlog, projectName)
+	
 
-#print list(get_func_at(symbols, symbols[0]['addr']))
 
 
 	

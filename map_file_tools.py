@@ -238,7 +238,7 @@ def symbolicate(symbols, inputCrashlog, outputCrashlog, projectName):
 	projectName = projectName.replace(')', '\)')
 	
 	stackLinePattern = stackLine.format(project_name = projectName);
-	print stackLinePattern;
+	#print stackLinePattern;
 	
 	with open(inputCrashlog) as f:
 		content = f.read()

@@ -136,7 +136,31 @@ def load_pc_and_lr_register_from_crashlog(file):
 		
 		match = regs[0];
 		return {'lr':eval(match[0]), 'pc':eval(match[1]), 'id':identifiers[0]}
+
+def load_noncomplite_symbols(file):
+	#\.[\w.]+[\W]*0x[0-9a-f]+[\W]*0x[0-9a-f]+[\W]+[\w|\.|/|(|)| |-]+
+	with open(file) as f:
+		result = []
+		content = f.read()
+		pattern = "(\.[\w.]+[\W]*(0x[0-9a-f]+)[\W]*(0x[0-9a-f]+)[\W]+([\w|\.|/|(|)| |-]+))"
+
+		all = re.findall(pattern, content)
 		
+		#print all
+		
+		for entry in all:
+			addr = eval(entry[1])
+			size = eval(entry[2])
+			if addr > 0 and size > 0 and size != addr:
+				obj = { 'text':	entry[0],
+						'obj': entry[3],
+						'addr':		addr,
+						'map.addr':	addr,
+						'size':		size}
+				result.append(obj)
+		return result
+
+	
 		
 def load_symbols(file):
 	with open(file) as f:
@@ -168,9 +192,11 @@ def load_symbols(file):
 		#                0x4a0005c8                DeleteButtons()
 		
 		
-		pattern = "\.(?P<segment>[\w]+)\.(?P<obf>[\w]+)[\W]*(?P<address>0x[0-9a-f]+)[\W]*(?P<size>0x[0-9a-f]+)[\W]+(?P<obj>[\w|\.|/]+)[\W]+0x[0-9a-f]+[\W]+(?P<func>.+)"
+		pattern = "\.(?P<segment>[\w]+)\.(?P<obf>[\w]+)[\W]*(?P<address>0x[0-9a-f]+)[\W]*(?P<size>0x[0-9a-f]+)[\W]+(?P<obj>[\(\)\.\w/ -]+)[\W]+0x[0-9a-f]+[\W]+(?P<func>.+)"
 
 		all = re.findall(pattern, content)
+		
+		#print all
 		
 		for entry in all:
 			addr = eval(entry[2])
@@ -183,6 +209,7 @@ def load_symbols(file):
 						'obj':		entry[4],
 						'name':		entry[5]}
 				result.append(obj)
+				#print obj
 		return result
 
 		
@@ -208,6 +235,7 @@ def get_symbol_at(symbols, address):
 		size = symbol['size']
 		if  address >= addr and address < (addr+size):
 			return symbol
+	return False
 
 def get_func_at_list(symbols, address):
 	for symbol in symbols:
@@ -216,10 +244,31 @@ def get_func_at_list(symbols, address):
 		if  address >= addr and address < (addr+size):
 			yield symbol['name']
 
-def get_func_at(symbols, address):
+def get_symbol_at_list(symbols, address):
+	for symbol in symbols:
+		addr = symbol['addr']
+		size = symbol['size']
+		if  address >= addr and address < (addr+size):
+			yield symbol
+
+def get_symbol_at_with_smallest_size(symbols, address):
+	result = False
+	size = 2**32
+	for symbol in get_symbol_at_list(symbols, address):
+		if size > symbol['size']:
+			result = symbol
+			size = symbol['size']
+	return result
+
+unknownFunction = "????"
+
+def get_func_at(symbols, nonCompliteSymbols, address, offset_to_relocate):
 	l = list(get_func_at_list(symbols, address))
 	if len(l) == 0:
-		return "????"
+		symbol = get_symbol_at_with_smallest_size(nonCompliteSymbols, address - offset_to_relocate)
+		if not symbol:
+			return unknownFunction
+		return symbol['obj']
 	if len(l) > 1:
 		return "Ambigous function, this is error situation. Variants:", l
 	return l[0]
@@ -228,7 +277,7 @@ def addr_to_str(addr):
 	return "0x%0.8X" % addr
 	
 	
-def symbolicate(symbols, inputCrashlog, outputCrashlog, projectName):
+def symbolicate(symbols,nonCompliteSymbols, inputCrashlog, outputCrashlog, projectName, offset_to_relocate):
 	stackLine =  '(\d+\W+{project_name}\W+(0x[0-9a-f]+)\W+0x[0-9a-f]+\W+\+\W+[0-9]+)'
 	
 	projectName = projectName.replace('"', '\"')
@@ -245,7 +294,7 @@ def symbolicate(symbols, inputCrashlog, outputCrashlog, projectName):
 		all = re.findall(stackLinePattern, content)
 		
 		for line, address in all:
-			func = get_func_at(symbols, eval(address))
+			func = get_func_at(symbols, nonCompliteSymbols, eval(address), offset_to_relocate)
 			lineWithFunc = line + "\t" + func
 			content = content.replace(line, lineWithFunc);
 
@@ -255,8 +304,10 @@ def symbolicate(symbols, inputCrashlog, outputCrashlog, projectName):
 	pass
 		
 symbols = load_symbols(map_file)
+nonCompliteSymbols = load_noncomplite_symbols(map_file)
 
 symbols.sort(lambda a,b: a['addr'] - b['addr'])
+nonCompliteSymbols.sort(lambda a,b: a['addr'] - b['addr'])
 
 #print 'Base addr ', addr_to_str(symbols[0]['addr']), symbols[0]['name'], symbols[0]['sysName'] 
 
@@ -264,6 +315,11 @@ symbols.sort(lambda a,b: a['addr'] - b['addr'])
 
 
 addrOfCrushSite = get_addr_of(symbols, example_crashlog_symbol_name)
+
+if addrOfCrushSite == 0:
+	print "Symbol", example_crashlog_symbol_name, "not found in map file."
+	sys.exit(0)
+
 registersExample = load_pc_and_lr_register_from_crashlog(example_crashlog)
 pc_registerValueOfCrushSite = registersExample['pc']
 
@@ -272,9 +328,11 @@ registers = load_pc_and_lr_register_from_crashlog(work_crashlog)
 
 if registersExample['id'] != registers['id']:
 	print "Identifiers of crushlogs not the same", registersExample['id'], " != ", registers['id']
+	sys.exit(0)
 
 projectName = registersExample['id']
 
+offset_to_relocate = pc_registerValueOfCrushSite - addrOfCrushSite
 
 
 print ""
@@ -284,9 +342,11 @@ print 'Main function addr:   ', addr_to_str(get_addr_of(symbols, 'main'))
 print 'Relocate with offset  ', addr_to_str((addrOfCrushSite - pc_registerValueOfCrushSite))
 print 'Relocate 0x4a000000 + ', addr_to_str(0x4a000000 - (addrOfCrushSite - pc_registerValueOfCrushSite))
 
+
 #symbols = relocate(symbols, get_addr_of(symbols, 'Crush1()'), 0xca738)
 #symbols = relocate(symbols, 0x4A003830, 0xca738)
 symbols = relocate(symbols, addrOfCrushSite, pc_registerValueOfCrushSite)
+#nonCompliteSymbols = relocate(nonCompliteSymbols, addrOfCrushSite, pc_registerValueOfCrushSite)
 
 #print 'Address of main function AFTER, ', addr_to_str(get_addr_of(symbols, 'main'))
 
@@ -305,8 +365,30 @@ symbols = relocate(symbols, addrOfCrushSite, pc_registerValueOfCrushSite)
 lr = registers['lr']
 pc = registers['pc']
 
-p = get_func_at(symbols, pc)
-l = get_func_at(symbols, lr)
+
+if not get_symbol_at(symbols, pc):
+	print "Symbols not found at addresses PC:", addr_to_str(pc)
+	print "Symbols address in map file space:",addr_to_str(pc - offset_to_relocate)
+	symbol = get_symbol_at_with_smallest_size(nonCompliteSymbols, pc - offset_to_relocate)
+	if not symbol:
+		print "MAP File not contains any records at this address"
+	else:
+		print symbol['text']
+
+if not get_symbol_at(symbols, lr):
+	print "Symbols not found at addresses LR:", addr_to_str(lr)
+	print "Symbols address in map file space:",addr_to_str(lr - offset_to_relocate)
+	symbol = get_symbol_at_with_smallest_size(nonCompliteSymbols, pc - offset_to_relocate)
+	if not symbol:
+		print "MAP File not contains any records at this address"
+	else:
+		print symbol['text']
+
+if not get_symbol_at(symbols, pc) and not get_symbol_at(symbols, lr):
+	sys.exit(0)
+
+p = get_func_at(symbols,nonCompliteSymbols, pc, offset_to_relocate)
+l = get_func_at(symbols,nonCompliteSymbols, lr, offset_to_relocate)
 
 print "\n"
 
@@ -349,7 +431,7 @@ if l == p:
 	print "LR+16 in:", get_func_at(symbols, lr+16)
 	
 if symbolicatedCrashlog:
-	symbolicate(symbols, work_crashlog, symbolicatedCrashlog, projectName)
+	symbolicate(symbols,nonCompliteSymbols, work_crashlog, symbolicatedCrashlog, projectName, offset_to_relocate)
 	
 
 

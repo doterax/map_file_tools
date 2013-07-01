@@ -418,17 +418,17 @@ if l == p:
 	print "    PC Value is:  ",addr_to_str(pc)
 	print "    LR Value is:  ",addr_to_str(lr)
 	print ""
-	print "PC-8  in:", get_func_at(symbols, pc-8)
-	print "LR-8  in:", get_func_at(symbols, lr-8)
+	print "PC-8  in:", get_func_at(symbols, nonCompliteSymbols, pc-8, offset_to_relocate)
+	print "LR-8  in:", get_func_at(symbols, nonCompliteSymbols, lr-8, offset_to_relocate)
 	print ""
-	print "PC-16 in:", get_func_at(symbols, pc-16)
-	print "LR-16 in:", get_func_at(symbols, lr-16)
+	print "PC-16 in:", get_func_at(symbols, nonCompliteSymbols, pc-16, offset_to_relocate)
+	print "LR-16 in:", get_func_at(symbols, nonCompliteSymbols, lr-16, offset_to_relocate)
 	print ""
-	print "PC+8  in:", get_func_at(symbols, pc+8)
-	print "LR+8  in:", get_func_at(symbols, lr+8)
+	print "PC+8  in:", get_func_at(symbols, nonCompliteSymbols, pc+8, offset_to_relocate)
+	print "LR+8  in:", get_func_at(symbols, nonCompliteSymbols, lr+8, offset_to_relocate)
 	print ""
-	print "PC+16 in:", get_func_at(symbols, pc+16)
-	print "LR+16 in:", get_func_at(symbols, lr+16)
+	print "PC+16 in:", get_func_at(symbols, nonCompliteSymbols, pc+16, offset_to_relocate)
+	print "LR+16 in:", get_func_at(symbols, nonCompliteSymbols, lr+16, offset_to_relocate)
 	
 if symbolicatedCrashlog:
 	symbolicate(symbols,nonCompliteSymbols, work_crashlog, symbolicatedCrashlog, projectName, offset_to_relocate)
